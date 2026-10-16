@@ -20,7 +20,8 @@ PROMO_RATES = {
 def reserve_seat(seat_id, customer, order_history=None):
     """Reserve a seat for a customer and record it in the order history.
 
-    Returns True if the seat was reserved, False if it does not exist or is already sold.
+    Returns True if the seat was reserved, False if it does not exist
+    or is already sold.
     """
     if order_history is None:
         order_history = []
@@ -32,7 +33,10 @@ def reserve_seat(seat_id, customer, order_history=None):
 
 
 def cancel_seat(seat_id):
-    """Mark a seat as available again. Returns False if the seat does not exist."""
+    """Mark a seat as available again.
+
+    Returns False if the seat does not exist.
+    """
     try:
         theater_seats[seat_id]["is_sold"] = False
     except KeyError:
