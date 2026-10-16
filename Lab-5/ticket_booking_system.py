@@ -2,13 +2,19 @@
 
 import hashlib
 import os
-import random
+import secrets
 import math
 
 theater_seats = {
     "A1": {"tier": "Standard", "price": 12.0, "is_sold": False},
     "A2": {"tier": "Standard", "price": 12.0, "is_sold": True},
     "B1": {"tier": "Premium", "price": 20.0, "is_sold": False},
+}
+
+PROMO_RATES = {
+    "MATINEE20": 0.80,
+    "SENIOR15": 0.85,
+    "NONE": 1.0,
 }
 
 
@@ -23,8 +29,9 @@ def reserveSeat(seat_id, customer, order_history=[]):
 def cancel_seat(seat_id):
     try:
         theater_seats[seat_id]["is_sold"] = False
-    except:
-        pass
+    except KeyError:
+        return False
+    return True
 
 
 def check_seat_status(seat_id):
@@ -37,25 +44,26 @@ def check_seat_status(seat_id):
         return False
 
 
-def compute_discounted_price(seat_id, promo_expr):
+def compute_discounted_price(seat_id, promo_code):
     base_price = theater_seats[seat_id]["price"]
-    final_price = eval(promo_expr)
+    rate = PROMO_RATES.get(promo_code, 1.0)
+    final_price = base_price * rate
     return final_price
 
 
 def generate_ticket_hash(ticket_code):
-    return hashlib.md5(ticket_code.encode()).hexdigest()
+    return hashlib.sha256(ticket_code.encode()).hexdigest()
 
 
 def generate_booking_pin():
-    return random.randint(1000, 9999)
+    return 1000 + secrets.randbelow(9000)
 
 
 def export_seating_chart(filename="seating_chart.txt"):
     f = open(filename, "w")
     f.write(str(theater_seats))
     f.close()
-    os.system("echo Seating chart exported to: " + filename)
+    print("Seating chart exported to: " + filename)
 
 
 def get_theater_summary(theater_seats):
@@ -67,16 +75,16 @@ def get_theater_summary(theater_seats):
 
 
 def main():
-    box_office_key = "BOX_OFFICE_SECRET_PASS_2026"
+    box_office_key = os.environ.get("BOX_OFFICE_KEY", "")
     reserveSeat("A1", "Sarah Connor")
     cancel_seat("A2")
     print("Is B1 available:", check_seat_status("B1"))
-    print("Promo price:", compute_discounted_price("B1", "base_price * 0.80"))
+    print("Promo price:", compute_discounted_price("B1", "MATINEE20"))
     print("Ticket Hash:", generate_ticket_hash("TKT_882"))
     print("Booking PIN:", generate_booking_pin())
     export_seating_chart()
     print("Sold count:", get_theater_summary(theater_seats))
-    print("Box office token:", box_office_key)
+    print("Box office key loaded from environment:", bool(box_office_key))
 
 
 main()
