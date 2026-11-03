@@ -4,7 +4,7 @@ import random
 import unittest
 from unittest import mock
 
-from game import GameOver, Mastermind
+from game import DIFFICULTIES, GameOver, Mastermind, choose_difficulty
 from logic import feedback
 
 
@@ -205,6 +205,135 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(game.state, "won")
         self.assertEqual(len(game.history), 1)
 
+
+
+class DifficultyTests(unittest.TestCase):
+    def test_every_difficulty_is_configured(self):
+        self.assertEqual(set(DIFFICULTIES), {"easy", "medium", "hard"})
+
+    def test_difficulties_really_differ(self):
+        lengths = {c["length"] for c in DIFFICULTIES.values()}
+        symbols = {c["symbols"] for c in DIFFICULTIES.values()}
+        turns = {c["turns"] for c in DIFFICULTIES.values()}
+        self.assertEqual((len(lengths), len(symbols), len(turns)), (3, 3, 3))
+
+    def test_game_uses_the_chosen_configuration(self):
+        for name, cfg in DIFFICULTIES.items():
+            game = Mastermind(name)
+            self.assertEqual(game.length, cfg["length"], name)
+            self.assertEqual(game.symbols, cfg["symbols"], name)
+            self.assertEqual(game.turns, cfg["turns"], name)
+            self.assertEqual(game.difficulty, name)
+
+    def test_secret_code_fits_the_difficulty(self):
+        for name, cfg in DIFFICULTIES.items():
+            allowed = {str(n) for n in range(1, cfg["symbols"] + 1)}
+            for _ in range(200):
+                game = Mastermind(name)
+                self.assertEqual(len(game.code), cfg["length"], name)
+                self.assertTrue(set(game.code) <= allowed, (name, game.code))
+
+    def test_unknown_difficulty_is_rejected(self):
+        with self.assertRaises(ValueError):
+            Mastermind("impossible")
+
+    def test_default_difficulty_is_medium(self):
+        game = Mastermind()
+        self.assertEqual((game.length, game.symbols, game.turns), (4, 6, 10))
+
+    def test_win_is_possible_on_every_difficulty(self):
+        for name, cfg in DIFFICULTIES.items():
+            game = Mastermind(name)
+            exact, partial = game.submit("".join(game.code))
+            self.assertEqual((exact, partial), (cfg["length"], 0), name)
+            self.assertEqual(game.state, "won", name)
+
+    def test_loss_takes_exactly_the_allowed_number_of_guesses(self):
+        for name, cfg in DIFFICULTIES.items():
+            code = ["1"] * cfg["length"]
+            game = Mastermind(name, code=code)
+            wrong = "2" * cfg["length"]
+            for i in range(cfg["turns"]):
+                self.assertEqual(game.state, "playing", (name, i))
+                game.submit(wrong)
+            self.assertEqual(game.state, "lost", name)
+            self.assertEqual(len(game.history), cfg["turns"], name)
+
+    def test_final_turn_win_on_every_difficulty(self):
+        for name, cfg in DIFFICULTIES.items():
+            code = ["1"] * cfg["length"]
+            game = Mastermind(name, code=code)
+            for _ in range(cfg["turns"] - 1):
+                game.submit("2" * cfg["length"])
+            game.submit("1" * cfg["length"])
+            self.assertEqual(game.state, "won", name)
+
+    def test_feedback_in_a_live_game_matches_the_reference(self):
+        rng = random.Random(7)
+        for name, cfg in DIFFICULTIES.items():
+            alphabet = [str(n) for n in range(1, cfg["symbols"] + 1)]
+            for _ in range(200):
+                code = [rng.choice(alphabet) for _ in range(cfg["length"])]
+                guess = [rng.choice(alphabet) for _ in range(cfg["length"])]
+                game = Mastermind(name, code=code)
+                self.assertEqual(
+                    game.submit("".join(guess)),
+                    reference_feedback(code, guess),
+                    (name, code, guess),
+                )
+
+    def test_run_asks_for_the_right_length_on_each_difficulty(self):
+        for name, cfg in DIFFICULTIES.items():
+            game = Mastermind(name, code=["1"] * cfg["length"])
+            text = play_script(game, ["q"])
+            self.assertIn(f"enter {cfg['length']} digits", text, name)
+            self.assertIn(f"1 to {cfg['symbols']}", text, name)
+
+    def test_easy_rejects_a_four_digit_guess(self):
+        game = Mastermind("easy", code=list("123"))
+        text = play_script(game, ["1234", "q"])
+        self.assertIn("Enter exactly 3 digits", text)
+        self.assertEqual(game.history, [])
+
+    def test_symbol_range_differs_between_difficulties(self):
+        # '7' is out of range on medium (1-6) but fine on hard (1-8)
+        medium = Mastermind("medium", code=list("1111"))
+        play_script(medium, ["7777", "q"])
+        self.assertEqual(medium.history, [])
+        hard = Mastermind("hard", code=list("77777"))
+        play_script(hard, ["77777"])
+        self.assertEqual(hard.state, "won")
+
+
+class ChooseDifficultyTests(unittest.TestCase):
+    def ask(self, inputs):
+        out = io.StringIO()
+        with mock.patch("builtins.input", side_effect=inputs):
+            with contextlib.redirect_stdout(out):
+                return choose_difficulty(), out.getvalue()
+
+    def test_enter_picks_the_default(self):
+        self.assertEqual(self.ask([""])[0], "medium")
+
+    def test_each_name_is_accepted(self):
+        for name in DIFFICULTIES:
+            self.assertEqual(self.ask([name])[0], name)
+
+    def test_case_and_whitespace_are_ignored(self):
+        self.assertEqual(self.ask(["  HaRd "])[0], "hard")
+
+    def test_bad_choice_asks_again(self):
+        choice, text = self.ask(["nightmare", "7", "easy"])
+        self.assertEqual(choice, "easy")
+        self.assertIn("Choose one of", text)
+
+    def test_end_of_input_falls_back_to_default(self):
+        self.assertEqual(self.ask([EOFError()])[0], "medium")
+
+    def test_menu_lists_every_difficulty(self):
+        _, text = self.ask([""])
+        for name in DIFFICULTIES:
+            self.assertIn(name, text)
 
 if __name__ == "__main__":
     unittest.main()
