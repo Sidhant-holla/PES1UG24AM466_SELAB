@@ -39,6 +39,32 @@ def choose_difficulty():
         print("Choose one of:", ", ".join(DIFFICULTIES))
 
 
+def validate_guess(raw, length, symbols):
+    """Return a message explaining what is wrong with a guess, or None."""
+    if raw == "":
+        return "Enter a guess, or q to quit."
+    if len(raw) != length:
+        return f"A guess needs exactly {length} digits, you entered {len(raw)}."
+    allowed = "".join(str(n) for n in range(1, symbols + 1))
+    bad = sorted({ch for ch in raw if ch not in allowed})
+    if bad:
+        return (f"Only the digits 1 to {symbols} are allowed "
+                f"(found {' '.join(bad)}).")
+    return None
+
+
+def format_history(history):
+    """Lay the accepted guesses out as a small table."""
+    if not history:
+        return "No guesses yet."
+    width = max(len("Guess"), max(len(guess) for guess, _, _ in history))
+    lines = [f"{'#':>3}  {'Guess':<{width}}  {'Exact':>5}  {'Partial':>7}"]
+    for number, (guess, exact, partial) in enumerate(history, start=1):
+        lines.append(
+            f"{number:>3}  {guess:<{width}}  {exact:>5}  {partial:>7}")
+    return "\n".join(lines)
+
+
 class Mastermind:
     def __init__(self, difficulty=DEFAULT_DIFFICULTY, code=None):
         if difficulty not in DIFFICULTIES:
@@ -58,9 +84,16 @@ class Mastermind:
         self.state = "playing"
 
     def submit(self, raw):
-        """Score one guess and update the game. Returns (exact, partial)."""
+        """Score one guess and update the game. Returns (exact, partial).
+
+        A malformed guess raises ValueError before anything is changed, so
+        it never uses up a turn or reaches the history.
+        """
         if self.state != "playing":
             raise GameOver(f"The game is over ({self.state}).")
+        problem = validate_guess(raw, self.length, self.symbols)
+        if problem:
+            raise ValueError(problem)
         exact, partial = feedback(self.code, list(raw))
         self.history.append((raw, exact, partial))
         self.turns -= 1
@@ -77,8 +110,7 @@ class Mastermind:
 
     def run(self):
         print(f"Mastermind — enter {self.length} digits from 1 to "
-              f"{self.symbols}.")
-        allowed = "".join(str(n) for n in range(1, self.symbols + 1))
+              f"{self.symbols}, or q to quit.")
         while self.state == "playing":
             try:
                 raw = input(f"{self.turns} turns left > ").strip()
@@ -88,12 +120,13 @@ class Mastermind:
             if raw.lower() == "q":
                 self.quit()
                 break
-            if len(raw) != self.length or any(ch not in allowed for ch in raw):
-                print(f"Enter exactly {self.length} digits from 1 to "
-                      f"{self.symbols}.")
+            try:
+                exact, partial = self.submit(raw)
+            except ValueError as problem:
+                print(problem)
                 continue
-            exact, partial = self.submit(raw)
             print("Exact:", exact, " Partial:", partial)
+            print(format_history(self.history))
         self.report()
 
     def report(self):

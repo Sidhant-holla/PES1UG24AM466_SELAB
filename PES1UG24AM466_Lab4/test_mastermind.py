@@ -4,7 +4,8 @@ import random
 import unittest
 from unittest import mock
 
-from game import DIFFICULTIES, GameOver, Mastermind, choose_difficulty
+from game import (DIFFICULTIES, GameOver, Mastermind, choose_difficulty,
+                  format_history, validate_guess)
 from logic import feedback
 
 
@@ -292,7 +293,7 @@ class DifficultyTests(unittest.TestCase):
     def test_easy_rejects_a_four_digit_guess(self):
         game = Mastermind("easy", code=list("123"))
         text = play_script(game, ["1234", "q"])
-        self.assertIn("Enter exactly 3 digits", text)
+        self.assertIn("needs exactly 3 digits", text)
         self.assertEqual(game.history, [])
 
     def test_symbol_range_differs_between_difficulties(self):
@@ -334,6 +335,123 @@ class ChooseDifficultyTests(unittest.TestCase):
         _, text = self.ask([""])
         for name in DIFFICULTIES:
             self.assertIn(name, text)
+
+
+BAD_GUESSES = {
+    "empty": "",
+    "too short": "123",
+    "too long": "12345",
+    "letters": "abcd",
+    "mixed letters": "12a4",
+    "digit zero": "0123",
+    "digit out of range": "1237",
+    "inner space": "12 3",
+    "punctuation": "12-4",
+    "full-width digits": "１２３４",
+    "superscript digits": "¹²³⁴",
+}
+
+
+class InputRobustnessTests(unittest.TestCase):
+    def test_valid_guess_passes(self):
+        self.assertIsNone(validate_guess("1234", 4, 6))
+
+    def test_every_malformed_guess_is_rejected(self):
+        for label, raw in BAD_GUESSES.items():
+            self.assertIsNotNone(validate_guess(raw, 4, 6), label)
+
+    def test_rejected_guess_does_not_use_a_turn_or_enter_history(self):
+        for label, raw in BAD_GUESSES.items():
+            game = Mastermind(code=list(CODE))
+            with self.assertRaises(ValueError, msg=label):
+                game.submit(raw)
+            self.assertEqual(game.turns, 10, label)
+            self.assertEqual(game.history, [], label)
+            self.assertEqual(game.state, "playing", label)
+
+    def test_rejection_message_says_what_is_wrong(self):
+        self.assertIn("exactly 4 digits", validate_guess("12", 4, 6))
+        self.assertIn("1 to 6", validate_guess("1237", 4, 6))
+        self.assertIn("7", validate_guess("1237", 4, 6))
+
+    def test_malformed_guesses_in_a_live_game_cost_nothing(self):
+        game = Mastermind(code=list(CODE))
+        inputs = ["12", "abcd", "1237", "", "12345", "6666", "q"]
+        text = play_script(game, inputs)
+        self.assertEqual(len(game.history), 1)
+        self.assertEqual(game.turns, 9)
+        self.assertIn("exactly 4 digits", text)
+
+    def test_prompt_counts_only_accepted_guesses(self):
+        game = Mastermind(code=list(CODE))
+        prompts = []
+
+        def fake_input(prompt):
+            prompts.append(prompt)
+            return ["bad", "6666", "also bad", "q"][len(prompts) - 1]
+
+        with mock.patch("builtins.input", side_effect=fake_input):
+            with contextlib.redirect_stdout(io.StringIO()):
+                game.run()
+        self.assertEqual([p.split()[0] for p in prompts], ["10", "10", "9", "9"])
+
+    def test_surrounding_whitespace_is_ignored(self):
+        game = Mastermind(code=list(CODE))
+        play_script(game, ["  1234  "])
+        self.assertEqual(game.history, [("1234", 4, 0)])
+
+    def test_game_over_wins_over_validation(self):
+        game = Mastermind(code=list(CODE))
+        game.submit("1234")
+        with self.assertRaises(GameOver):
+            game.submit("not a guess")
+
+    def test_quit_is_case_insensitive(self):
+        for key in ("q", "Q", " q "):
+            game = Mastermind(code=list(CODE))
+            play_script(game, [key])
+            self.assertEqual(game.state, "quit", key)
+
+
+class HistoryTests(unittest.TestCase):
+    def test_empty_history_has_a_message(self):
+        self.assertEqual(format_history([]), "No guesses yet.")
+
+    def test_history_has_a_header_and_one_row_per_guess(self):
+        rows = format_history([("1111", 1, 0), ("2341", 0, 4)]).splitlines()
+        self.assertEqual(len(rows), 3)
+        for word in ("Guess", "Exact", "Partial"):
+            self.assertIn(word, rows[0])
+        self.assertEqual(rows[1].split(), ["1", "1111", "1", "0"])
+        self.assertEqual(rows[2].split(), ["2", "2341", "0", "4"])
+
+    def test_columns_line_up_for_longer_codes(self):
+        rows = format_history([("12345678", 0, 2), ("87654321", 1, 3)]).splitlines()
+        self.assertEqual(len({len(r) for r in rows}), 1)
+
+    def test_history_shown_after_each_accepted_guess_only(self):
+        game = Mastermind(code=list(CODE))
+        text = play_script(game, ["1111", "bad", "2341", "q"])
+        # two accepted guesses: first table has 1 row, second has 2 rows
+        self.assertEqual(text.count("Guess"), 2)
+        self.assertEqual(text.count("1111"), 2)
+        self.assertEqual(text.count("2341"), 1)
+
+    def test_each_row_matches_its_own_guess_only(self):
+        game = Mastermind(code=list(CODE))
+        game.submit("1111")
+        game.submit("6666")
+        game.submit("4321")
+        self.assertEqual(
+            [(g, e, p) for g, e, p in game.history],
+            [("1111", 1, 0), ("6666", 0, 0), ("4321", 0, 4)],
+        )
+
+    def test_feedback_line_matches_the_last_row(self):
+        game = Mastermind(code=list(CODE))
+        text = play_script(game, ["1243", "q"])
+        self.assertIn("Exact: 2  Partial: 2", text)
+        self.assertEqual(game.history[-1], ("1243", 2, 2))
 
 if __name__ == "__main__":
     unittest.main()
